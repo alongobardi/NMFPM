@@ -432,7 +432,17 @@ class NMFPM(object):
         for j in range(len(self.ion)):
             
             df_tmp = self.line_info[[x.split( )[0] == self.ion[j] for x  in self.line_info.name.values]].reset_index(drop=True)
-            trans_os[j] = df_tmp.loc[[(df_tmp.wrest.values[i] == self.trans_wl[j]) for i in range(len(df_tmp))], "f"].values
+            
+            # Consider transitions with wrest within 0.5 A from self.trans_wl.
+            # If mutiple transitions satisfy this condition, select the transition with the smallest difference between wrest and self.trans_wl
+            df_tmp = df_tmp.loc[[np.abs(df_tmp.wrest.values[i] - self.trans_wl[j]) < 0.5 for i in range(len(df_tmp))]]
+            
+            if len(df_tmp) == 1:
+                trans_os[j] = df_tmp.f.values
+            
+            else:
+                wl_dif = np.abs([df_tmp.wrest.values[i] - self.trans_wl[j] for i in range(len(df_tmp))])
+                trans_os[j] = df_tmp.loc[wl_dif == np.min(wl_dif), "f"].values
             
             
         cne = [0.014971475 * np.sqrt(np.pi)* (10.**self.ion_logN[i]) * trans_os[i] for i in range(self.nsim)]
