@@ -9,7 +9,6 @@ from astropy.convolution import convolve, Gaussian1DKernel
 from collections import defaultdict
 from bisect import bisect_left
 
-    
 
 class NMFPM(object):
     """Non-Negative Matrix Factorization - Profile Maker
@@ -19,8 +18,8 @@ class NMFPM(object):
     Parameters
     ----------
     NMF_dct: Dictionary containing the information about the non-negative matrices (X,C).
-        X : NMF_dct['X'] ndarray of shape 𝑛 × 𝑚, where 𝑚 is the number of reduced features in the NMF space
-        C : NMF_dct['C'] ndarray of shape 𝑚 × 𝑣 and represents the coeffcient matrix of the 𝑚 reduced features
+        X : NMF_dct['X'] ndarray of shape n x m, where m is the number of reduced features in the NMF space
+        C : NMF_dct['C'] ndarray of shape m x u and represents the coeffcient matrix of the m reduced features
     
     nsim: int, default = 1
         Number of profiles to be generated.
@@ -54,12 +53,12 @@ class NMFPM(object):
         Allow for the generated profile to be convolved with a Gaussian kernel
     
     res: float, default = 8
-        Resolution of the generated profiles in km/s
+        Resolution of the generated profiles in km/s. Needs to set convolved True to take effect
         
     px_scale = float, default = None
         Sampling of the generated profiles in km/s
         
-    SN = int, default = None
+    SN = ndarray of shape (nsim,), default = [None]
         Signal-to-Noise ratio of the continuum signal used to compute the gaussian noise to be added
         
     sigma_sky = int, default = None
@@ -75,6 +74,7 @@ class NMFPM(object):
     ----------
 
     metals_ = Library of nsim synthetic metals
+    metals_nonoise_ = Library of nsim synthetic metals, noise free 
     noise_ = Array of noise values for the nsim synthetic metals
     wavelength_ = Array of wavelength values for the nsim synthetic metals
     
@@ -96,7 +96,7 @@ class NMFPM(object):
         convolved = False,
         res = 8,
         px_scale = None,
-        SN = None,
+        SN = np.array([None]),
         sigma_sky = None,
         seed = None,
         verbosity= 0
@@ -134,7 +134,6 @@ class NMFPM(object):
         
         __path__ = os.path.dirname(os.path.realpath(__file__))
         
-        
         with open( __path__+'/''docs/NMF_dictionary.json', "rb") as fp:
             self.NMF_dct = pickle.load(fp)
             
@@ -144,8 +143,6 @@ class NMFPM(object):
             x_,PDF_ = np.loadtxt(__path__+'/''docs/pdf_low.txt',unpack=True)
         elif  self.ion_family =='user':
             x_,PDF_ = np.loadtxt(self.filename_ion_family,unpack=True)
-            
-    
         
         self.x=x_
         self.PDF=PDF_
@@ -196,7 +193,10 @@ class NMFPM(object):
             
         if self.nsim != len(self.ion_logN):
             raise ValueError("nsim and ion_logN do not match in size")
-        
+            
+        if (self.SN.any() != None) & (self.nsim != len(self.SN)):
+            raise ValueError("nsim and SN do not match in size")
+                
         
         return self
         
@@ -337,7 +337,6 @@ class NMFPM(object):
         
         
     def _NMF_profile(self, X, C, nsim_bin):
-        
         """Generate a profile based on the non-negative matrices X, C stored in NMF_dtc
         
         Parameters
@@ -408,11 +407,9 @@ class NMFPM(object):
                 S.append(profiles_sim_bin)
         
         S = [x* (10**(-12)) for xs in S for x in xs]
-
+        
         index_del = [random.randint((self.nsim-count), len(S)-1) for i in range(len(S)-self.nsim)]
-       
         if len(index_del) >=1:
-
             S = np.delete(S,index_del,axis=0)
         
         
@@ -420,6 +417,7 @@ class NMFPM(object):
         MN=self.metal(S)
         self.metals_ = MN[0]
         self.noise_ = MN[1]
+        self.metals_nonoise_ = MN[2]
         self.wavelength_ = self.wavel()
         
         if self.verbosity > 0:
@@ -434,17 +432,7 @@ class NMFPM(object):
         for j in range(len(self.ion)):
             
             df_tmp = self.line_info[[x.split( )[0] == self.ion[j] for x  in self.line_info.name.values]].reset_index(drop=True)
-            
-            # Consider transitions with wrest within 0.5 A from self.trans_wl.
-            # If mutiple transitions satisfy this condition, select the transition with the smallest difference between wrest and self.trans_wl
-            df_tmp = df_tmp.loc[[np.abs(df_tmp.wrest.values[i] - self.trans_wl[j]) < 0.5 for i in range(len(df_tmp))]]
-            
-            if len(df_tmp) == 1:
-                trans_os[j] = df_tmp.f.values
-            
-            else:
-                wl_dif = np.abs([df_tmp.wrest.values[i] - self.trans_wl[j] for i in range(len(df_tmp))])
-                trans_os[j] = df_tmp.loc[wl_dif == np.min(wl_dif), "f"].values
+            trans_os[j] = df_tmp.loc[[(df_tmp.wrest.values[i] == self.trans_wl[j]) for i in range(len(df_tmp))], "f"].values
             
             
         cne = [0.014971475 * np.sqrt(np.pi)* (10.**self.ion_logN[i]) * trans_os[i] for i in range(self.nsim)]
@@ -466,31 +454,19 @@ class NMFPM(object):
 
         
        
-        #if self.SN != None:
-        #    print('Shape',metals.shape)
-        #    noise=[]
-        #    metalnoise=[]
-        #    for mm in metals:
-        #        metwnoise=self.gnoise_add(mm)
-        #        noise.append(metwnoise[1])
-        #        metalnoise.append(metwnoise[0])
-        #    return metalnoise,noise
-        #else:
-        #    return metals,None
-            
-        if self.SN != None:
-            noise= np.zeros((self.nsim,metals.shape[1]))
-            metalnoise = np.zeros((self.nsim,metals.shape[1]))
-            
-            for i in range(self.nsim):
-                metwnoise=self.gnoise_add(metals[i])
-                noise[i][:] = metwnoise[1]
-                metalnoise[i][:] = metwnoise[0]
-            return metalnoise,noise
-            
+        if self.SN.any() != None:
+            noise=[]
+            metalnoise=[]
+            ii=0
+            for mm in metals:
+                metwnoise=self.gnoise_add(mm,self.SN[ii])
+                noise.append(metwnoise[1])
+                metalnoise.append(metwnoise[0])
+                ii=ii+1
+            return metalnoise,noise,metals
         else:
-            return metals,None
-            
+            return metals,None,metals
+        
     def wavel(self):
     
         _c = 299792458e-3 # km/s
@@ -506,10 +482,10 @@ class NMFPM(object):
     
         return wavelength
         
-    def gnoise_add(self,m):
+    def gnoise_add(self,m,SN):
         
         
-        _poisson = np.random.poisson(m * (self.SN**2.))
+        _poisson = np.random.poisson(m * (SN**2.))
         noise_continuum = np.sqrt(_poisson)
         
         if self.sigma_sky != None:
@@ -521,7 +497,7 @@ class NMFPM(object):
             
         profile_noise = _poisson + noise_sky
         
-        return profile_noise/(self.SN**2.),noise_array/(self.SN**2.)
+        return profile_noise/(SN**2.),noise_array/(SN**2.)
         
         
     
