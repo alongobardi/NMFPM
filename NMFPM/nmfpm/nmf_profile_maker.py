@@ -8,6 +8,9 @@ import random
 from astropy.convolution import convolve, Gaussian1DKernel
 from collections import defaultdict
 from bisect import bisect_left
+from astropy import units as u
+from multiprocessing import Pool
+
 
 
 class NMFPM(object):
@@ -63,8 +66,24 @@ class NMFPM(object):
         
     sigma_sky = int, default = None
         RMS value of the sky signal. If not None the sky noise is computed as a random distribution centred on 0 and with dispersion sigma_sky
-        
-    seed = int, default = None
+    
+    doublet: Boolean, default = False
+        Enables creation of doublets (e.g. MgII, CIV etc...)
+    
+    dbl_fratio: float, default = 0
+        If doublet True, create a second line with oscillator strengh 
+            f_line_2 = dbl_fratio * f_line_1
+
+
+    dbl_dwave: float, default = 0
+        If doublet True, create a second line with center shifted by dbl_dwave
+
+    seed: int, default = None
+        Allow selection of seed
+    
+    nproc: int, default = 1
+        Number of processors to use
+      
     
     verbosity = int, defalut = 0
         Print (1) or not (0) info to terminal
@@ -96,9 +115,13 @@ class NMFPM(object):
         convolved = False,
         res = 8,
         px_scale = None,
-        SN = np.array([None]),
+        SN = [None],
         sigma_sky = None,
+        doublet = False, 
+        dbl_fratio = 0.0,
+        dbl_dwave = 0.0,
         seed = None,
+        nproc = 1,
         verbosity= 0
         
     
@@ -108,30 +131,39 @@ class NMFPM(object):
         self.nsim = nsim
         self.ion_family = ion_family
         self.filename_ion_family = filename_ion_family
-        self.ion_logN = ion_logN
-        self.ion = ion
-        self.trans_wl = trans_wl
+        self.ion_logN = np.array(ion_logN)
+        self.ion = np.array(ion)
+        self.trans_wl = np.array(trans_wl)
         self.filename_ion_list = filename_ion_list
         self.convolved = convolved
         self.res = res
         self.px_scale = px_scale
-        self.SN = SN
+        self.SN = np.array(SN)
         self.sigma_sky = sigma_sky
+        self.doublet = doublet 
+        self.dbl_fratio = dbl_fratio
+        self.dbl_dwave = dbl_dwave
         self.seed = seed
+        self.nproc = nproc 
         self.verbosity=verbosity
         
-        
-        
+        #define index array for later use in parallelization
+        self.index=range(self.nsim)
+
         # Run saftey checks
         # Check parameters
         self._check_params()
         # Check files
         self._check_files()
         
-        
+        if self.verbosity > 0:
+            print("NMF-PM: Starting preliminary operations")
+
+
+        if self.verbosity > 0:
+            print("NMF-PM: Load input velocity profiles and oscillator strengths")
+
         # Load up some useful files
-        
-        
         __path__ = os.path.dirname(os.path.realpath(__file__))
         
         with open( __path__+'/''docs/NMF_dictionary.json', "rb") as fp:
@@ -144,16 +176,29 @@ class NMFPM(object):
         elif  self.ion_family =='user':
             x_,PDF_ = np.loadtxt(self.filename_ion_family,unpack=True)
         
+        #store distribution of delta v 
         self.x=x_
         self.PDF=PDF_
 
-
-        if self.filename_ion_list == None :
-            line_info= pd.read_csv(__path__+'/''docs/linelist.ascii.txt',comment = '#',delim_whitespace=True)
-            self.line_info = line_info[(line_info.gamma != 0) & (~line_info['gamma'].isnull())]
+        
+        #here read oscillator strengths from linetools or file
+        if self.filename_ion_list == None:
+            from linetools.lists.linelist import LineList
+            self.lines = LineList('Strong')
+            pool = Pool(processes=self.nproc)
+            self.fstren=pool.map(self._get_f,self.index)
+            pool.close()
+            
+            self.fstren=np.array(self.fstren)
+            if(self.fstren.any() is None):
+                raise ValueError('Wavelengths not found in database. Aborting')
+                exit()
         else:
             self.line_info= pd.read_csv(self.filename_ion_list,comment = '#',delim_whitespace=True)
-            
+            raise Exception('This needs more coding to import the oscillator strengths in an array. Sorry')
+            exit()
+
+
         # Set seed if needed
         if self.seed != None:
             np.random.seed(self.seed)
@@ -163,19 +208,50 @@ class NMFPM(object):
         self.native_pix=1.002
         
    
+    def _get_f(self,index):
+        """
+
+        This function loads oscillator strengths for the desired transitions
+
+        """
+        return self.lines[self.trans_wl[index]*u.AA]['f']
+
+
+
     def _check_params(self):
-        # n_sim
-        self._nsim = self.nsim
         
+        """
+
+        This function checks for input paramaters and suggests how to fix errors
+
+        
+        """
+
+
+        #check n_sim is postivive integer         
         if (
-            not isinstance(self._nsim, numbers.Integral)
-            or self._nsim <= 0
+            not isinstance(self.nsim, numbers.Integral)
+            or self.nsim <= 0
         ):
             raise ValueError(
                 "Number of simulations must be a positive integer; got "
                 f"(nsim={self._nsim!r})"
             )
+    
+
+        
+        #check nproc is postivive integer 
+        self.proc = self.nproc
+        if (
+            not isinstance(self.nproc, numbers.Integral)
+            or self.nproc <= 0
+        ):
+            raise ValueError(
+                "Number of processors must be a positive integer; got "
+                f"(nproc={self.nproc!r})"
+            )
             
+
         # ion_family
         allowed_family = ("moderate", "low", "user")
         if self.ion_family not in allowed_family:
@@ -183,6 +259,7 @@ class NMFPM(object):
                 f"Invalid ion_family parameter: got {self.ion_family!r} instead of one of "
                 f"{allowed_family}"
             )
+
             
         #keep sims and parameters of equal number
         if self.nsim != len(self.trans_wl):
@@ -197,10 +274,18 @@ class NMFPM(object):
         if (self.SN.any() != None) & (self.nsim != len(self.SN)):
             raise ValueError("nsim and SN do not match in size")
                 
-        
-        return self
+        return 
         
     def _check_files(self):
+
+        """
+
+        This function checks on 
+
+
+        """
+
+
         # filename_ion_family
         if (
             self.ion_family == 'user'
@@ -210,7 +295,7 @@ class NMFPM(object):
                 "Got "f" ion_family={self.ion_family!r} " "but you did not provide a file for DeltaV_90 pdf "
             )
             
-        return self
+        return 
         
         
     
@@ -434,7 +519,8 @@ class NMFPM(object):
             df_tmp = self.line_info[[x.split( )[0] == self.ion[j] for x  in self.line_info.name.values]].reset_index(drop=True)
             
             # Consider transitions with wrest within 0.5 A from self.trans_wl.
-            # If mutiple transitions satisfy this condition, select the transition with the smallest difference between wrest and self.trans_wl
+            # If mutiple transitions satisfy this condition, select the transition with 
+            # the smallest difference between wrest and self.trans_wl
             df_tmp = df_tmp.loc[[np.abs(df_tmp.wrest.values[i] - self.trans_wl[j]) < 0.5 for i in range(len(df_tmp))]]
             
             if len(df_tmp) == 1:
@@ -445,8 +531,11 @@ class NMFPM(object):
                 trans_os[j] = df_tmp.loc[wl_dif == np.min(wl_dif), "f"].values
             
             
-        cne = [0.014971475 * np.sqrt(np.pi)* (10.**self.ion_logN[i]) * trans_os[i] for i in range(self.nsim)]
+        #MF vectorize this for speed up
+        #cne = [0.014971475 * np.sqrt(np.pi)* (10.**self.ion_logN[i]) * trans_os[i] for i in range(self.nsim)]
+        cne = 0.014971475*np.sqrt(np.pi)*(10.**self.ion_logN)*trans_os
         
+        #MF can be vectorized for speed up 
         metals = np.exp(-1.* np.array([cne[i]* S[i] for i in range(self.nsim)]))
         
         
