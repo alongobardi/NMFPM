@@ -75,8 +75,8 @@ class NMFPM(object):
             f_line_2 = dbl_fratio * f_line_1
 
 
-    dbl_dwave: float, default = 0
-        If doublet True, create a second line with center shifted by dbl_dwave
+    dbl_dvel: float, default = 0
+        If doublet True, create a second line with center shifted in velocity by dbl_dvel [km/s]
 
     seed: int, default = None
         Allow selection of seed
@@ -119,7 +119,7 @@ class NMFPM(object):
         sigma_sky = None,
         doublet = False, 
         dbl_fratio = 0.0,
-        dbl_dwave = 0.0,
+        dbl_dvel = 0.0,
         seed = None,
         nproc = 1,
         verbosity= 0
@@ -142,7 +142,7 @@ class NMFPM(object):
         self.sigma_sky = sigma_sky
         self.doublet = doublet 
         self.dbl_fratio = dbl_fratio
-        self.dbl_dwave = dbl_dwave
+        self.dbl_dvel = dbl_dvel
         self.seed = seed
         self.nproc = nproc 
         self.verbosity=verbosity
@@ -168,7 +168,8 @@ class NMFPM(object):
         
         with open( __path__+'/''docs/NMF_dictionary.json', "rb") as fp:
             self.NMF_dct = pickle.load(fp)
-            
+                        
+
         if self.ion_family =='moderate':
             x_,PDF_ = np.loadtxt(__path__+'/''docs/pdf_moderate.txt',unpack=True)
         elif  self.ion_family =='low':
@@ -204,10 +205,17 @@ class NMFPM(object):
             np.random.seed(self.seed)
             random.seed(self.seed)
                    
-        # Define native pixel scale (1km/s)
-        self.native_pix=1.002
-        
+        #Define native pixel scale (1km/s)
+        #The shape of C in the NMF which is 1198
+        #Pix 599 is at zero 
+        self.native_pix=1.0
+    
    
+        #get shape of vel array in native pixels
+        self.natvpix=self.NMF_dct[0]['C'].shape[1]
+        #index of zero velocity in native pixels
+        self.natvzero=np.int(self.natvpix/2)
+
     def _get_f(self,index):
         """
 
@@ -280,7 +288,7 @@ class NMFPM(object):
 
         """
 
-        This function checks on 
+        This function checks input files 
 
 
         """
@@ -426,14 +434,14 @@ class NMFPM(object):
         
         Parameters
         ----------
-        X : NMF_dct['X'] ndarray of shape 𝑛 × 𝑚, where 𝑚 is the number of reduced features in the NMF space
+        X : NMF_dct['X'] ndarray of shape n × m, where m is the number of reduced features in the NMF space
         
-        C : NMF_dct['C'] ndarray of shape 𝑚 × 𝑣 representing the basis matrix of the 𝑚 reduced features
+        C : NMF_dct['C'] ndarray of shape m × u representing the basis matrix of the m reduced features
         
         Returns
         -------
         
-        simulated : ndarray of shape (n_sim, 𝑣) simulated profiles
+        simulated : ndarray of shape (n_sim, u) simulated profiles
         
         """
             
@@ -443,9 +451,7 @@ class NMFPM(object):
         n_data, n_features = X.shape
         
         nreal = int(nsim_bin/n_data) + 1
-
-       
-        
+    
         for n in range(nreal):
         
     
@@ -462,13 +468,56 @@ class NMFPM(object):
         
         
     def simulation(self):
+           
+        """
+        This is the main function to calls profile making and spectra making routins
         
+        """
         
+
+
+        if(self.verbosity>0):
+            print("NMF-PM: starting profile simulations")            
+            
+        #generate profiles
+        S=self._run_profiles()
+
+
+        if(self.verbosity>0):
+            print("NMF-PM: now compute observed profiles in flux space")
+        
+        #turn profiles into spectra 
+        MN=self.metal(S)
+        self.metals_ = MN[0]
+        self.noise_ = MN[1]
+        self.metals_nonoise_ = MN[2]
+        self.wavelength_ = self.wavel()
+        
+        return S
+
+        
+    
+
+    def _run_profiles(self):
+        
+    
+        """
+
+        This function controls the workflow to draw profiles
+        
+
+        """
+
+
+        #get time 
         start_time = time.time()
         
-        DV90_dist = np.random.choice(self.x,self.nsim, p= self.PDF)
+    
+        #draw from DV90 distribution
+        DV90_dist = np.random.choice(self.x,self.nsim, p=self.PDF)
     
     
+        #now generate the profiles in velocity space
         edges = [self.NMF_dct[i]['edg'] for i in range(len(self.NMF_dct))]
         
         S = []
@@ -497,48 +546,62 @@ class NMFPM(object):
         if len(index_del) >=1:
             S = np.delete(S,index_del,axis=0)
         
-        
-        
-        MN=self.metal(S)
-        self.metals_ = MN[0]
-        self.noise_ = MN[1]
-        self.metals_nonoise_ = MN[2]
-        self.wavelength_ = self.wavel()
-        
+    
         if self.verbosity > 0:
-            print("NMF-PM takes", time.time() - start_time, "to simulate", self.nsim, "profiles")
-        return S
+            print("NMF-PM: it takes", time.time() - start_time, "to simulate", self.nsim, "velocity profiles")
+    
+        return np.array(S)
+            
         
     def metal(self,S):
+
+        """
+
+        This function turns aborption profiles into spectra
+
         
-        trans_os=np.zeros(len(self.ion))
+        """
+
+        _c = 299792458e-3 # km/s
+                
+        #compute the normalization part in vector form
+        cne = 0.014971475*np.sqrt(np.pi)*(10.**self.ion_logN)*self.fstren
+        metals1 = np.exp(-1.*S*cne[:,np.newaxis])
         
-        
-        for j in range(len(self.ion)):
+        #compute second term of the doublet if so desired
+        if self.doublet:
+            metals2 = np.exp(-1.*S*cne[:,np.newaxis]*self.dbl_fratio)
             
-            df_tmp = self.line_info[[x.split( )[0] == self.ion[j] for x  in self.line_info.name.values]].reset_index(drop=True)
+            #compute new length of array to fit in doublet 
+            new_index=np.int(2*self.natvzero+self.dbl_dvel)
+            vel_native=np.arange(new_index)-self.natvzero
             
-            # Consider transitions with wrest within 0.5 A from self.trans_wl.
-            # If mutiple transitions satisfy this condition, select the transition with 
-            # the smallest difference between wrest and self.trans_wl
-            df_tmp = df_tmp.loc[[np.abs(df_tmp.wrest.values[i] - self.trans_wl[j]) < 0.5 for i in range(len(df_tmp))]]
+            #insert first profile
+            metals=np.ones((self.nsim,new_index))
+            metals[:,0:self.natvpix]=metals[:,0:self.natvpix]*metals1
+
+            #insert second profile
+            istart=np.int(self.dbl_dvel)
+            iend=istart+self.natvpix
+            metals[:,istart:iend]=metals[:,istart:iend]*metals2
             
-            if len(df_tmp) == 1:
-                trans_os[j] = df_tmp.f.values
-            
-            else:
-                wl_dif = np.abs([df_tmp.wrest.values[i] - self.trans_wl[j] for i in range(len(df_tmp))])
-                trans_os[j] = df_tmp.loc[wl_dif == np.min(wl_dif), "f"].values
-            
-            
-        #MF vectorize this for speed up
-        #cne = [0.014971475 * np.sqrt(np.pi)* (10.**self.ion_logN[i]) * trans_os[i] for i in range(self.nsim)]
-        cne = 0.014971475*np.sqrt(np.pi)*(10.**self.ion_logN)*trans_os
-        
-        #MF can be vectorized for speed up 
-        metals = np.exp(-1.* np.array([cne[i]* S[i] for i in range(self.nsim)]))
-        
-        
+
+        else:
+            #if no doublet, use original size for wave determination 
+            vel_native=np.arange(self.natvpix)-self.natvzero
+            metals=metals1
+
+        #find wave array
+        wave_native=np.outer(self.trans_wl,np.array(vel_native)/_c)+self.trans_wl.reshape(-1,1)
+           
+
+        #import matplotlib.pyplot as plt
+        #plt.plot(wave_native[0,:],metals[0,:])
+        #plt.show()
+        #exit()
+
+        #MF need to start again from here 
+
         if self.convolved == True:
             metals = [self._convolve(m) for m in metals]
         
