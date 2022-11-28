@@ -160,7 +160,7 @@ class NMFPM(object):
             random.seed(self.seed)
                    
         # Define native pixel scale (1km/s)
-        self.native_pix=1.002
+        self.native_pix=1.00167
         
    
     def _check_params(self):
