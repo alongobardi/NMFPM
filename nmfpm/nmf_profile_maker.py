@@ -148,7 +148,8 @@ class NMFPM(object):
         self.verbosity=verbosity
         
         #define index array for later use in parallelization
-        self.index=range(self.nsim)
+        self.index=np.arange(self.nsim)
+      
 
         # Run saftey checks
         # Check parameters
@@ -333,13 +334,21 @@ class NMFPM(object):
     
         return count
     
-    def _convolve(self,S):
+    def _convolve(self,index):
         
+        """
+
+
+        Perform the convolution of a spectrum by the resolution
+
+
+        """
+
         
-        gauss_kernel = Gaussian1DKernel(stddev=self.res/2.355)
-        conv = convolve(S,gauss_kernel,boundary='extend')
+        conv = convolve(self.flux[index,:],self.gauss_kernel,boundary='wrap')
         
         return conv
+    
         
     
     def _resample_matrix(self,orig_spec_axis,fin_spec_axis):
@@ -496,6 +505,26 @@ class NMFPM(object):
         return S
 
         
+    def _check_ew(self,wave,flux):
+
+
+        """
+
+        Utility funciton to check the EW of the profile
+
+
+        """
+        
+
+
+        delta_w=np.roll(wave,-1)-wave
+        ew=np.sum((1-flux[:-1])*delta_w[:-1])
+        
+        return ew
+        
+
+        
+
     
 
     def _run_profiles(self):
@@ -552,7 +581,7 @@ class NMFPM(object):
     
         return np.array(S)
             
-        
+
     def metal(self,S):
 
         """
@@ -563,7 +592,11 @@ class NMFPM(object):
         """
 
         _c = 299792458e-3 # km/s
-                
+        
+
+        if(self.verbosity > 0):
+            print('NMF-PM: Creating spectrum in flux space')
+            
         #compute the normalization part in vector form
         cne = 0.014971475*np.sqrt(np.pi)*(10.**self.ion_logN)*self.fstren
         metals1 = np.exp(-1.*S*cne[:,np.newaxis])
@@ -580,6 +613,10 @@ class NMFPM(object):
             metals=np.ones((self.nsim,new_index))
             metals[:,0:self.natvpix]=metals[:,0:self.natvpix]*metals1
 
+
+            if(self.verbosity > 0):
+                print('NMF-PM: Inserting doublets')
+
             #insert second profile
             istart=np.int(self.dbl_dvel)
             iend=istart+self.natvpix
@@ -593,18 +630,39 @@ class NMFPM(object):
 
         #find wave array
         wave_native=np.outer(self.trans_wl,np.array(vel_native)/_c)+self.trans_wl.reshape(-1,1)
-           
+        self.flux=np.array(metals)
 
         #import matplotlib.pyplot as plt
-        #plt.plot(wave_native[0,:],metals[0,:])
+        #plt.plot(wave_native[8,:],metals[8,:])
         #plt.show()
-        #exit()
 
-        #MF need to start again from here 
+        #start_time = time.time()
+        #print(self._check_ew(wave_native[0,:],self.flux[0,:]))
 
         if self.convolved == True:
-            metals = [self._convolve(m) for m in metals]
+            if(self.verbosity > 0):
+                print('NMF-PM: Applying convolution kernel')
+                
+            self.gauss_kernel = Gaussian1DKernel(stddev=self.res/2.355)
+            
+            pool = Pool(processes=self.nproc)
+            self.flux=pool.map(self._convolve,self.index,chunksize=np.int(self.nsim/self.nproc))
+            pool.close()
         
+            self.flux=np.array(self.flux)
+
+        #print("NMF-PM: it takes", time.time() - start_time, "to simulate", self.nsim, "velocity profiles")
+
+        #print(self._check_ew(wave_native[0,:],self.flux[0,:]))
+
+            
+        #import matplotlib.pyplot as plt
+        #plt.plot(wave_native[8,:],self.flux[8,:])
+        #plt.show()
+        
+        exit()
+
+
         
         if self.px_scale != None:
             origin_spec_axis = np.arange(-600,600,self.native_pix)
