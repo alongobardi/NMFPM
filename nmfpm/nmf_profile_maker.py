@@ -527,8 +527,6 @@ class NMFPM(object):
                                
                 
             else:
-                #raise Exception('This needs more coding to allow for fractional rebinning. Sorry')
-                #exit()
                 if self.verbosity >0:
                     print("NMF-PM: Running fractional pixel rebinning")
                 
