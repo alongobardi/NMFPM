@@ -7,6 +7,7 @@ import pandas as pd
 import random
 from astropy.convolution import convolve, Gaussian1DKernel
 from scipy.ndimage import convolve1d
+from scipy.interpolate import interp1d
 from collections import defaultdict
 from bisect import bisect_left
 from astropy import units as u
@@ -613,8 +614,41 @@ class NMFPM(object):
                
                 
             else:
-                raise Exception('This needs more coding to allow for fractional rebinning. Sorry')
-                exit()
+                #raise Exception('This needs more coding to allow for fractional rebinning. Sorry')
+                #exit()
+                if self.verbosity >0:
+                    print("NMF-PM: Running fractional pixel rebinning")
+                
+                #First find greatest common divisor between target pix scale and native one with precision of 0.1kms
+                
+                precision = (0.1)**-1
+                
+                px_common = np.gcd(int(self.px_scale*precision),int(self.native_pix*precision))/precision
+                oversample = int(self.native_pix/px_common)
+                
+                print(oversample, px_common)
+                
+                oversamp_grid = np.linspace(np.min(self.velocity), np.max(self.velocity), num=(len(self.velocity)*oversample))
+                
+                print(self.velocity, oversamp_grid)
+                
+                flux_interp = interp1d(self.velocity, self.flux, axis=1, kind='nearest-up')(oversamp_grid)
+                
+                s0, s1 = np.shape(flux_interp)
+                self.rebinfac   = int(self.px_scale/px_common)
+                self.finalNpix  = int(s1//self.rebinfac)
+
+                #rebin flux
+                self.fluxnew = np.mean((flux_interp[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
+                self.velocitynew  = np.interp(np.arange(self.finalNpix)*self.rebinfac+self.rebinfac/2., np.arange(len(oversamp_grid)),
+                                           oversamp_grid-px_common/2.)
+
+                
+                import matplotlib.pyplot as plt
+                plt.step(self.velocity, self.flux[0,:], where='mid')
+                plt.step(self.velocitynew, self.fluxnew[0,:], where='mid')
+                plt.show()
+                
                 #resample_grid =self._resample_matrix(origin_spec_axis,final_spec_axis)
                 #self.flux = [self._resampling(mm,resample_grid) for mm in self.flux ]
 
