@@ -534,7 +534,7 @@ class NMFPM(object):
                 
                 rnd_px_scale = np.round(self.px_scale, decimals=1)
                 if rnd_px_scale != self.px_scale:
-                   if self.verbose>0:
+                   if self.verbosity>0:
                      print("NMF-PM: Target pixel scale of {:3.5f} kms has been round to {:3.1f} kms".format(self.px_scale, rnd_px_scale))
                    self.px_scale = rnd_px_scale
                 
