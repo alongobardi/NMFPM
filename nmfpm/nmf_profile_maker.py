@@ -10,7 +10,6 @@ from scipy.ndimage import convolve1d
 from collections import defaultdict
 from bisect import bisect_left
 from astropy import units as u
-from multiprocessing import Pool
 
 
 
@@ -81,11 +80,7 @@ class NMFPM(object):
 
     seed: int, default = None
         Allow selection of seed
-    
-    nproc: int, default = 1
-        Number of processors to use
-      
-    
+        
     verbosity = int, defalut = 0
         Print (1) or not (0) info to terminal
     
@@ -93,10 +88,10 @@ class NMFPM(object):
     Attributes
     ----------
 
-    metals_ = Library of nsim synthetic metals
-    metals_nonoise_ = Library of nsim synthetic metals, noise free 
-    noise_ = Array of noise values for the nsim synthetic metals
-    wavelength_ = Array of wavelength values for the nsim synthetic metals
+    flux = Nsim synthetic spectra, with noise if so desired
+    flux_nonoise = Nsim synthetic spectra, no noise
+    noise = associated noise values 
+    wave =  wavelength values for the nsim synthetic spectra
     
     
     Authors
@@ -122,7 +117,6 @@ class NMFPM(object):
         dbl_fratio = 0.0,
         dbl_dvel = 0.0,
         seed = None,
-        nproc = 1,
         verbosity= 0
         
     
@@ -145,13 +139,11 @@ class NMFPM(object):
         self.dbl_fratio = dbl_fratio
         self.dbl_dvel = dbl_dvel
         self.seed = seed
-        self.nproc = nproc 
         self.verbosity=verbosity
         
-        #define index array for later use in parallelization
+        #define index array 
         self.index=np.arange(self.nsim)
       
-
         # Run saftey checks
         # Check parameters
         self._check_params()
@@ -161,7 +153,6 @@ class NMFPM(object):
         if self.verbosity > 0:
             print("NMF-PM: Starting preliminary operations")
 
-
         if self.verbosity > 0:
             print("NMF-PM: Load input velocity profiles and oscillator strengths")
 
@@ -169,8 +160,7 @@ class NMFPM(object):
         __path__ = os.path.dirname(os.path.realpath(__file__))
         
         with open( __path__+'/''docs/NMF_dictionary.json', "rb") as fp:
-            self.NMF_dct = pickle.load(fp)
-                        
+            self.NMF_dct = pickle.load(fp)                        
 
         if self.ion_family =='moderate':
             x_,PDF_ = np.loadtxt(__path__+'/''docs/pdf_moderate.txt',unpack=True)
@@ -188,15 +178,11 @@ class NMFPM(object):
         if self.filename_ion_list == None:
             from linetools.lists.linelist import LineList
             self.lines = LineList('Strong')
-            
-            #pool = Pool(processes=self.nproc)
-            #self.fstren=pool.map(self._get_f,self.index)
-            #pool.close()
-            
+                        
             self.fstren = np.zeros_like(self.index, dtype=np.float)
             for ind in np.arange(self.nsim):
-                self.fstren[ind] = self._get_f(self.index[ind])
-            
+                self.fstren[ind] = self.lines[self.trans_wl[ind]*u.AA]['f']
+                
             self.fstren=np.array(self.fstren)
             if(self.fstren.any() is None):
                 raise ValueError('Wavelengths not found in database. Aborting')
@@ -223,23 +209,13 @@ class NMFPM(object):
         #index of zero velocity in native pixels
         self.natvzero=np.int(self.natvpix/2)
 
-    def _get_f(self,index):
-        """
-
-        This function loads oscillator strengths for the desired transitions
-
-        """
-        return self.lines[self.trans_wl[index]*u.AA]['f']
-
 
 
     def _check_params(self):
         
         """
-
         This function checks for input paramaters and suggests how to fix errors
-
-        
+ 
         """
 
 
@@ -254,19 +230,7 @@ class NMFPM(object):
             )
     
 
-        
-        #check nproc is postivive integer 
-        self.proc = self.nproc
-        if (
-            not isinstance(self.nproc, numbers.Integral)
-            or self.nproc <= 0
-        ):
-            raise ValueError(
-                "Number of processors must be a positive integer; got "
-                f"(nproc={self.nproc!r})"
-            )
-            
-
+    
         # ion_family
         allowed_family = ("moderate", "low", "user")
         if self.ion_family not in allowed_family:
@@ -294,9 +258,7 @@ class NMFPM(object):
     def _check_files(self):
 
         """
-
         This function checks input files 
-
 
         """
 
@@ -316,7 +278,13 @@ class NMFPM(object):
     
     def _count_intervals(self, sequence, intervals):
         
-    
+        """
+
+        Utility function to count intervals in delta velocity distribution
+
+        """
+
+        
         count = defaultdict(int)
         
         intervals.sort()
@@ -339,23 +307,7 @@ class NMFPM(object):
         
     
         return count
-    
-    def _convolve(self,index):
-        
-        """
-
-
-        Perform the convolution of a spectrum by the resolution
-
-
-        """
-
-        
-        conv = convolve(self.flux[index,:],self.gauss_kernel,boundary='wrap')
-        
-        return conv
-    
-        
+            
     
     def _resample_matrix(self,orig_spec_axis,fin_spec_axis):
         #Create a re-sampling matrix to be used in re-sampling spectra in a way that conserves flux
@@ -481,6 +433,20 @@ class NMFPM(object):
         simulated = [x for xs in simulated for x in xs]
     
         return simulated[0:nsim_bin]
+
+        
+    def _compute_ew(self,wave,flux):
+
+
+        """
+        Utility function to compute the EW of the profile
+
+        """
+    
+        delta_w=np.roll(wave,-1)-wave
+        ew=np.sum((1-flux[:,:-1])*delta_w[:,:-1],axis=1)
+        
+        return ew
         
         
     def simulation(self):
@@ -490,8 +456,6 @@ class NMFPM(object):
         
         """
         
-
-
         if(self.verbosity>0):
             print("NMF-PM: starting profile simulations")            
             
@@ -505,54 +469,27 @@ class NMFPM(object):
         #turn profiles into spectra 
         MN=self.metal(S)
         
-        #self.metals_ = MN[0]
-        #self.noise_ = MN[1]
-        #self.metals_nonoise_ = MN[2]
-        #self.wavelength_ = self.wavel()
-        
-        return #S
 
-        
-    def _check_ew(self,wave,flux):
-
-
-        """
-
-        Utility funciton to check the EW of the profile
-
-
-        """
-        
-
-
-        delta_w=np.roll(wave,-1)-wave
-        ew=np.sum((1-flux[:-1])*delta_w[:-1])
-        
-        return ew
-        
-
-        
-
+        if(self.verbosity>0):
+            print("NMF-PM: All done!")
+            
+        return
     
 
     def _run_profiles(self):
         
     
         """
-
         This function controls the workflow to draw profiles
         
-
         """
 
 
         #get time 
         start_time = time.time()
         
-    
         #draw from DV90 distribution
         DV90_dist = np.random.choice(self.x,self.nsim, p=self.PDF)
-    
     
         #now generate the profiles in velocity space
         edges = [self.NMF_dct[i]['edg'] for i in range(len(self.NMF_dct))]
@@ -567,12 +504,9 @@ class NMFPM(object):
                     count+= nsim_bin
                 if (self.NMF_dct[j]['V_comp'] == 'low') or (self.NMF_dct[j]['V_comp'] == 'high'):
                     nsim_bin = int(nsim_bin/2) + 1
-                
-        
+                        
                 X = self.NMF_dct[j]['X']
                 C = self.NMF_dct[j]['C']
-
-            
                 
                 profiles_sim_bin = self._NMF_profile(X,C,nsim_bin)
                 S.append(profiles_sim_bin)
@@ -582,8 +516,7 @@ class NMFPM(object):
         index_del = [random.randint((self.nsim-count), len(S)-1) for i in range(len(S)-self.nsim)]
         if len(index_del) >=1:
             S = np.delete(S,index_del,axis=0)
-        
-    
+            
         if self.verbosity > 0:
             print("NMF-PM: it takes", time.time() - start_time, "to simulate", self.nsim, "velocity profiles")
     
@@ -595,13 +528,12 @@ class NMFPM(object):
         """
 
         This function turns aborption profiles into spectra
-
-        
+      
         """
 
-        _c = 299792458e-3 # km/s
+        #speed light in km/s
+        _c = 299792458e-3 
         
-
         if(self.verbosity > 0):
             print('NMF-PM: Creating spectrum in flux space')
             
@@ -636,144 +568,97 @@ class NMFPM(object):
             vel_native=np.arange(self.natvpix)-self.natvzero
             metals=metals1
 
-        #find wave array
-        #wave_native=np.outer(self.trans_wl,np.array(vel_native)/_c)+self.trans_wl.reshape(-1,1)
-        self.flux=np.array(metals)
-
-        import matplotlib.pyplot as plt
-        #plt.plot(wave_native[8,:],metals[8,:])
-        #plt.show()
-
-        #start_time = time.time()
-        #print(self._check_ew(wave_native[0,:],self.flux[0,:]))
-
+        #store velocity,wave and flux 
+        self.velocity=vel_native
+        self.flux=np.array(metals)        
+        #self.wave=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
+        
+        
         if self.convolved == True:
             if(self.verbosity > 0):
                 print('NMF-PM: Applying convolution kernel')
-                
+                start_time=time.time()
+
+            #define kernel and convolve 
             self.gauss_kernel = Gaussian1DKernel(stddev=self.res/2.355)
-            start_time = time.time()
-            
-            #pool = Pool(processes=self.nproc)
-            #self.flux=pool.map(self._convolve,self.index,chunksize=np.int(self.nsim/self.nproc))
-            #pool.close()
-            
-            plt.plot(self.flux[0,:])
             self.flux = convolve1d(self.flux, self.gauss_kernel.array, axis = 1)
-            plt.plot(self.flux[0,:])
-            plt.show()
-            
             self.flux=np.array(self.flux)
            
             if self.verbosity > 0:
                print("NMF-PM: it takes", time.time() - start_time, "to convolve", self.nsim, "velocity profiles")
-
-        #print("NMF-PM: it takes", time.time() - start_time, "to simulate", self.nsim, "velocity profiles")
-
-        #print(self._check_ew(wave_native[0,:],self.flux[0,:]))
-
-            
-        #import matplotlib.pyplot as plt
-        #plt.plot(wave_native[8,:],self.flux[8,:])
-        #plt.show()
-       
         
         if self.px_scale != None:
             
-            if np.modf(self.px_scale/self.native_pix)[0] == 0:
-               if self.verbosity >0:
-                  print("NMF-PM: Running non interpolating rebinning")
-               
-               s0, s1 = np.shape(self.flux)
-               self.rebinfac   = int(self.px_scale/self.native_pix)
-               self.finalNpix  = int(s1//self.rebinfac)
-               
-               self.native_flux = np.copy(self.flux)
-               self.flux = np.sum((self.flux[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
-               
-               self.vel_native = (np.arange(len(self.native_flux[0,:self.finalNpix*self.rebinfac]))+0.5)-599
-               self.vel_rebin  = np.interp(np.arange(len(self.flux[0,:]))*self.rebinfac+self.rebinfac/2., np.arange(len(self.vel_native)), self.vel_native)
-               
-               plt.step(self.vel_native,self.native_flux[0,:self.finalNpix*self.rebinfac]*4, where='mid')
-               plt.step(self.vel_rebin,self.flux[0,:], where='mid')
-               plt.show()
-                  
-            else:
-              origin_spec_axis = np.arange(-600,600,self.native_pix)
-              final_spec_axis = np.arange(-600,600,self.px_scale)
-            
-              resample_grid =self._resample_matrix(origin_spec_axis,final_spec_axis)
-            
-              self.flux = [self._resampling(mm,resample_grid) for mm in self.flux ]
-     
-       
-        if self.SN.any() != None:
-            
-            self.flux_noinoise = np.copy(self.flux)
-            self.gnoise_add()
-    '''        
-            noise=[]
-            metalnoise=[]
-            ii=0
-            for mm in metals:
-                metwnoise=self.gnoise_add(mm,self.SN[ii])
-                noise.append(metwnoise[1])
-                metalnoise.append(metwnoise[0])
-                ii=ii+1
-            return metalnoise,noise,metals
-        else:
-            return metals,None,metals
-     '''   
-    def wavel(self):
-    
-        _c = 299792458e-3 # km/s
-        wavelength = []
-        for j in range(len(self.ion)):
-        
-            if self.px_scale != None:
-                vel=np.arange(-600,600,self.px_scale)
-            else:
-                vel=np.arange(-600,600,self.native_pix)
+            if self.verbosity > 0:
+                print("NMF-PM: Re-binning to desired pixel scale")
                 
-            wavelength.append((np.array(vel)/_c * self.trans_wl[j])+self.trans_wl[j])
-    
-        return wavelength
- 
-    def gnoise_add(self):
+            if np.modf(self.px_scale/self.native_pix)[0] == 0:
+                if self.verbosity >0:
+                    print("NMF-PM: Running non interpolating rebinning")
+
+                #compute the shape of rebinning 
+                s0, s1 = np.shape(self.flux)
+                self.rebinfac   = int(self.px_scale/self.native_pix)
+                self.finalNpix  = int(s1//self.rebinfac)
+
+                
+                #rebin flux
+                self.flux = np.mean((self.flux[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
+
+                #now work on velocity 
+                self.vel_native = self.velocity[:self.finalNpix*self.rebinfac]
+                self.velocity  = np.interp(np.arange(self.finalNpix)*self.rebinfac+self.rebinfac/2., np.arange(len(self.vel_native)),
+                                           self.vel_native-self.native_pix/2)
+                self.wave=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
+               
+                
+            else:
+                raise Exception('This needs more coding to allow for fractional rebinning. Sorry')
+                exit()
+                #resample_grid =self._resample_matrix(origin_spec_axis,final_spec_axis)
+                #self.flux = [self._resampling(mm,resample_grid) for mm in self.flux ]
+
+        #store no noise spectra
+        self.flux_nonoise = np.copy(self.flux)
+
+        #omage de la maison, ew
+        self.ew=self._compute_ew(self.wave,self.flux)
         
+
+        if self.SN.any()!= None:
+
+            if self.verbosity > 0:
+                print("NMF-PM: Inject noise into spectra")
+
+            #call noise generator
+            self._gnoise_add()
+
+            
+    def _gnoise_add(self):
+
+        """
+        Function that handles the noise generation
+
+        """
+
+        #draw a poisson from flux 
         _poisson = np.random.poisson(self.flux * ((self.SN**2.)[:,np.newaxis]))
         noise_continuum = np.sqrt(_poisson)
-        
+
+        #if so desired add sky noise
         if self.sigma_sky != None:
             noise_sky = np.random.normal(0, self.sigma_sky, size=np.shape(noise_continuum))
             noise_array= np.sqrt(noise_continuum**2. +noise_sky**2.)
         else:
             noise_array= noise_continuum
             noise_sky=0
-            
+
+        #compute and store 
         profile_noise = _poisson + noise_sky
         self.flux = profile_noise/((self.SN**2.)[:,np.newaxis])
         self.noise = noise_array/((self.SN**2.)[:,np.newaxis])
         
         return        
-        
-    def gnoise_add2(self,m,SN):
-        
-        
-        _poisson = np.random.poisson(m * (SN**2.))
-        noise_continuum = np.sqrt(_poisson)
-        
-        if self.sigma_sky != None:
-            noise_sky = np.random.normal(0, self.sigma_sky, len(m))
-            noise_array= np.sqrt(noise_continuum**2. +noise_sky**2.)
-        else:
-            noise_array= noise_continuum
-            noise_sky=0
-            
-        profile_noise = _poisson + noise_sky
-        
-        return profile_noise/(SN**2.),noise_array/(SN**2.)
-        
         
     
 
