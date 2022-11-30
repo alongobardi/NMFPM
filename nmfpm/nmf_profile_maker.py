@@ -530,33 +530,35 @@ class NMFPM(object):
                 if self.verbosity >0:
                     print("NMF-PM: Running fractional pixel rebinning")
                 
-                #First find greatest common divisor between target pix scale and native one with precision of 0.1kms
-                
+                #Work on pixel scale and limit to a precision of 1 decimal point
                 rnd_px_scale = np.round(self.px_scale, decimals=1)
                 if rnd_px_scale != self.px_scale:
                    if self.verbosity>0:
                      print("NMF-PM: Target pixel scale of {:3.5f} kms has been round to {:3.1f} kms".format(self.px_scale, rnd_px_scale))
                    self.px_scale = rnd_px_scale
                 
+                #First find greatest common divisor between target pix scale and native one with precision of 0.1kms
                 precision = 0.1
-                
                 px_common = np.gcd(int(self.px_scale/precision),int(self.native_pix/precision))*precision
                 oversample = int(self.native_pix/px_common)
                 
+                #Find oversampled velocity grid, in range defined by the native velocity array
                 oversamp_grid = np.linspace(np.min(self.velocity), np.max(self.velocity), num=(len(self.velocity)*oversample))
-                                
+                
+                #Interpolate with scipy funcion along axis                
                 flux_interp = interp1d(self.velocity, self.flux, axis=1, kind='nearest-up')(oversamp_grid)
                 
+                #Now follow similar mthod as for the non interpolating rebin
                 s0, s1 = np.shape(flux_interp)
                 self.rebinfac   = int(self.px_scale/px_common)
                 self.finalNpix  = int(s1//self.rebinfac)
 
-                #rebin flux
+                #Work on flux then define velocity
                 self.flux      = np.mean((flux_interp[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
                 self.velocity  = np.interp(np.arange(self.finalNpix)*self.rebinfac+self.rebinfac/2., np.arange(len(oversamp_grid)),
                                            oversamp_grid-px_common/2.)
 
-                        
+        #Define wave array                
         self.wave=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
 
         #store no noise spectra
