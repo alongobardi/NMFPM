@@ -188,9 +188,14 @@ class NMFPM(object):
         if self.filename_ion_list == None:
             from linetools.lists.linelist import LineList
             self.lines = LineList('Strong')
-            pool = Pool(processes=self.nproc)
-            self.fstren=pool.map(self._get_f,self.index)
-            pool.close()
+            
+            #pool = Pool(processes=self.nproc)
+            #self.fstren=pool.map(self._get_f,self.index)
+            #pool.close()
+            
+            self.fstren = np.zeros_like(self.index, dtype=np.float)
+            for ind in np.arange(self.nsim):
+                self.fstren[ind] = self._get_f(self.index[ind])
             
             self.fstren=np.array(self.fstren)
             if(self.fstren.any() is None):
@@ -499,12 +504,13 @@ class NMFPM(object):
         
         #turn profiles into spectra 
         MN=self.metal(S)
-        self.metals_ = MN[0]
-        self.noise_ = MN[1]
-        self.metals_nonoise_ = MN[2]
-        self.wavelength_ = self.wavel()
         
-        return S
+        #self.metals_ = MN[0]
+        #self.noise_ = MN[1]
+        #self.metals_nonoise_ = MN[2]
+        #self.wavelength_ = self.wavel()
+        
+        return #S
 
         
     def _check_ew(self,wave,flux):
@@ -746,8 +752,8 @@ class NMFPM(object):
             noise_sky=0
             
         profile_noise = _poisson + noise_sky
-        self.flux = profile_noise/((SN**2.)[:,np.newaxis])
-        self.noise = noise_array/((SN**2.)[:,np.newaxis])
+        self.flux = profile_noise/((self.SN**2.)[:,np.newaxis])
+        self.noise = noise_array/((self.SN**2.)[:,np.newaxis])
         
         return        
         
