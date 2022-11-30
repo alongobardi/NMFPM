@@ -309,94 +309,7 @@ class NMFPM(object):
     
         return count
             
-    
-    def _resample_matrix(self,orig_spec_axis,fin_spec_axis):
-        #Create a re-sampling matrix to be used in re-sampling spectra in a way that conserves flux
-        orig_edges = orig_spec_axis
-        fin_edges = fin_spec_axis[(fin_spec_axis > orig_edges[0]) & (orig_edges[-1] > fin_spec_axis)]
-        step = 1
-        while step <=2:
             
-            # Lower bin and upper bin edges
-            orig_low = orig_edges[:-1]
-            fin_low = fin_edges[:-1]
-            orig_upp = orig_edges[1:]
-            fin_upp = fin_edges[1:]
-        
-            
-            l_inf = np.where(orig_low > fin_low[:, np.newaxis],
-                            orig_low, fin_low[:, np.newaxis])
-
-            l_sup = np.where(orig_upp < fin_upp[:, np.newaxis],
-                            orig_upp, fin_upp[:, np.newaxis])
-        
-        
-            
-            resamp_mat = (l_sup - l_inf).clip(0)
-            
-            resamp_mat = resamp_mat * (orig_upp - orig_low)
-
-            left_clip = np.where(fin_edges[:-1] - orig_edges[0] < 0, 0, 1)
-            
-            right_clip = np.where(orig_edges[-1] - fin_edges[1:] < 0, 0, 1)
-                
-            keep_overlapping_matrix = left_clip * right_clip
-        
-            resamp_mat *= keep_overlapping_matrix[:, np.newaxis]
-            bin_size = np.sum(resamp_mat, axis=-1)
-
-            
-            step +=1
-                
-            # Lower bin and upper bin edges
-            const_ =  (np.abs((bin_size) - self.native_pix)/2.)
-           
-            fin_low = fin_edges[:-1]- const_
-            fin_upp = fin_edges[1:]- const_
-        
-            l_inf = np.where(orig_low > fin_low[:, np.newaxis],
-                            orig_low, fin_low[:, np.newaxis])
-
-            l_sup = np.where(orig_upp < fin_upp[:, np.newaxis],
-                            orig_upp, fin_upp[:, np.newaxis])
-        
-        
-                
-            resamp_mat = (l_sup - l_inf).clip(0)
-            resamp_mat = resamp_mat * (orig_upp - orig_low)
-
-            left_clip = np.where((fin_edges[:-1]- const_) - orig_edges[0] < 0, 0, 1)
-            right_clip = np.where(orig_edges[-1] - (fin_edges[1:]- const_) < 0, 0, 1)
-            keep_overlapping_matrix = left_clip * right_clip
-        
-            resamp_mat *= keep_overlapping_matrix[:, np.newaxis]
-
-            return resamp_mat
-            
-    def _resampling(self, S, resample_grid):
-        
-        np.modf(self.px_scale/self.native_pix)
-        
-        origin_spec_axis = np.arange(-600,600,self.native_pix)
-        final_spec_axis = np.arange(-600,600,self.px_scale)
-        
-        new_flux_shape = list(S.shape)
-        new_flux_shape.insert(-1, 1)
-
-        in_flux = S.reshape(new_flux_shape)
-        ones = [1] * len(S.shape[:-1])
-        new_shape_resample_grid = ones + list(resample_grid.shape)
-        resample_grid = resample_grid.reshape(new_shape_resample_grid)
-
-
-        out_flux =  [[sum(a*b for a,b in zip(X_row,Y_col)) for Y_col in zip(*resample_grid.T)] for X_row in in_flux]/ np.sum(resample_grid, axis=-1)
-        resampled_spectrum = out_flux[0]
-        
-        y2 = np.interp(final_spec_axis,final_spec_axis[(final_spec_axis>  origin_spec_axis[0]) & ( origin_spec_axis[-1] > final_spec_axis)][:-1],resampled_spectrum)
-        
-        
-        return y2
-        
         
     def _NMF_profile(self, X, C, nsim_bin):
         """Generate a profile based on the non-negative matrices X, C stored in NMF_dtc
@@ -610,8 +523,8 @@ class NMFPM(object):
                 self.vel_native = self.velocity[:self.finalNpix*self.rebinfac]
                 self.velocity  = np.interp(np.arange(self.finalNpix)*self.rebinfac+self.rebinfac/2., np.arange(len(self.vel_native)),
                                            self.vel_native-self.native_pix/2)
-                self.wave=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
-               
+
+                               
                 
             else:
                 #raise Exception('This needs more coding to allow for fractional rebinning. Sorry')
@@ -621,17 +534,19 @@ class NMFPM(object):
                 
                 #First find greatest common divisor between target pix scale and native one with precision of 0.1kms
                 
-                precision = (0.1)**-1
+                rnd_px_scale = np.round(self.px_scale, decimals=1)
+                if rnd_px_scale != self.px_scale:
+                   if self.verbose>0:
+                     print("NMF-PM: Target pixel scale of {:3.5f} kms has been round to {:3.1f} kms".format(self.px_scale, rnd_px_scale))
+                   self.px_scale = rnd_px_scale
                 
-                px_common = np.gcd(int(self.px_scale*precision),int(self.native_pix*precision))/precision
+                precision = 0.1
+                
+                px_common = np.gcd(int(self.px_scale/precision),int(self.native_pix/precision))*precision
                 oversample = int(self.native_pix/px_common)
                 
-                print(oversample, px_common)
-                
                 oversamp_grid = np.linspace(np.min(self.velocity), np.max(self.velocity), num=(len(self.velocity)*oversample))
-                
-                print(self.velocity, oversamp_grid)
-                
+                                
                 flux_interp = interp1d(self.velocity, self.flux, axis=1, kind='nearest-up')(oversamp_grid)
                 
                 s0, s1 = np.shape(flux_interp)
@@ -639,18 +554,12 @@ class NMFPM(object):
                 self.finalNpix  = int(s1//self.rebinfac)
 
                 #rebin flux
-                self.fluxnew = np.mean((flux_interp[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
-                self.velocitynew  = np.interp(np.arange(self.finalNpix)*self.rebinfac+self.rebinfac/2., np.arange(len(oversamp_grid)),
+                self.flux      = np.mean((flux_interp[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
+                self.velocity  = np.interp(np.arange(self.finalNpix)*self.rebinfac+self.rebinfac/2., np.arange(len(oversamp_grid)),
                                            oversamp_grid-px_common/2.)
 
-                
-                import matplotlib.pyplot as plt
-                plt.step(self.velocity, self.flux[0,:], where='mid')
-                plt.step(self.velocitynew, self.fluxnew[0,:], where='mid')
-                plt.show()
-                
-                #resample_grid =self._resample_matrix(origin_spec_axis,final_spec_axis)
-                #self.flux = [self._resampling(mm,resample_grid) for mm in self.flux ]
+                        
+        self.wave=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
 
         #store no noise spectra
         self.flux_nonoise = np.copy(self.flux)
@@ -658,7 +567,6 @@ class NMFPM(object):
         #omage de la maison, ew
         self.ew=self._compute_ew(self.wave,self.flux)
         
-
         if self.SN.any()!= None:
 
             if self.verbosity > 0:
