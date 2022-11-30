@@ -6,6 +6,7 @@ import time
 import pandas as pd
 import random
 from astropy.convolution import convolve, Gaussian1DKernel
+from scipy.ndimage import convolve1d
 from collections import defaultdict
 from bisect import bisect_left
 from astropy import units as u
@@ -416,9 +417,10 @@ class NMFPM(object):
             
     def _resampling(self, S, resample_grid):
         
+        np.modf(self.px_scale/self.native_pix)
+        
         origin_spec_axis = np.arange(-600,600,self.native_pix)
         final_spec_axis = np.arange(-600,600,self.px_scale)
-        
         
         new_flux_shape = list(S.shape)
         new_flux_shape.insert(-1, 1)
@@ -629,10 +631,10 @@ class NMFPM(object):
             metals=metals1
 
         #find wave array
-        wave_native=np.outer(self.trans_wl,np.array(vel_native)/_c)+self.trans_wl.reshape(-1,1)
+        #wave_native=np.outer(self.trans_wl,np.array(vel_native)/_c)+self.trans_wl.reshape(-1,1)
         self.flux=np.array(metals)
 
-        #import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt
         #plt.plot(wave_native[8,:],metals[8,:])
         #plt.show()
 
@@ -644,12 +646,21 @@ class NMFPM(object):
                 print('NMF-PM: Applying convolution kernel')
                 
             self.gauss_kernel = Gaussian1DKernel(stddev=self.res/2.355)
+            start_time = time.time()
             
-            pool = Pool(processes=self.nproc)
-            self.flux=pool.map(self._convolve,self.index,chunksize=np.int(self.nsim/self.nproc))
-            pool.close()
-        
+            #pool = Pool(processes=self.nproc)
+            #self.flux=pool.map(self._convolve,self.index,chunksize=np.int(self.nsim/self.nproc))
+            #pool.close()
+            
+            plt.plot(self.flux[0,:])
+            self.flux = convolve1d(self.flux, self.gauss_kernel.array, axis = 1)
+            plt.plot(self.flux[0,:])
+            plt.show()
+            
             self.flux=np.array(self.flux)
+           
+            if self.verbosity > 0:
+               print("NMF-PM: it takes", time.time() - start_time, "to convolve", self.nsim, "velocity profiles")
 
         #print("NMF-PM: it takes", time.time() - start_time, "to simulate", self.nsim, "velocity profiles")
 
@@ -659,22 +670,42 @@ class NMFPM(object):
         #import matplotlib.pyplot as plt
         #plt.plot(wave_native[8,:],self.flux[8,:])
         #plt.show()
-        
-        exit()
-
-
+       
         
         if self.px_scale != None:
-            origin_spec_axis = np.arange(-600,600,self.native_pix)
-            final_spec_axis = np.arange(-600,600,self.px_scale)
             
-            resample_grid =self._resample_matrix(origin_spec_axis,final_spec_axis)
+            if np.modf(self.px_scale/self.native_pix)[0] == 0:
+               if self.verbosity >0:
+                  print("NMF-PM: Running non interpolating rebinning")
+               
+               s0, s1 = np.shape(self.flux)
+               self.rebinfac   = int(self.px_scale/self.native_pix)
+               self.finalNpix  = int(s1//self.rebinfac)
+               
+               self.native_flux = np.copy(self.flux)
+               self.flux = np.sum((self.flux[:,:self.finalNpix*self.rebinfac]).reshape(s0, self.finalNpix, self.rebinfac), axis=2)
+               
+               self.vel_native = (np.arange(len(self.native_flux[0,:self.finalNpix*self.rebinfac]))+0.5)-599
+               self.vel_rebin  = np.interp(np.arange(len(self.flux[0,:]))*self.rebinfac+self.rebinfac/2., np.arange(len(self.vel_native)), self.vel_native)
+               
+               plt.step(self.vel_native,self.native_flux[0,:self.finalNpix*self.rebinfac]*4, where='mid')
+               plt.step(self.vel_rebin,self.flux[0,:], where='mid')
+               plt.show()
+                  
+            else:
+              origin_spec_axis = np.arange(-600,600,self.native_pix)
+              final_spec_axis = np.arange(-600,600,self.px_scale)
             
-            metals = [self._resampling(mm,resample_grid) for mm in metals ]
-
-        
+              resample_grid =self._resample_matrix(origin_spec_axis,final_spec_axis)
+            
+              self.flux = [self._resampling(mm,resample_grid) for mm in self.flux ]
+     
        
         if self.SN.any() != None:
+            
+            self.flux_noinoise = np.copy(self.flux)
+            self.gnoise_add()
+    '''        
             noise=[]
             metalnoise=[]
             ii=0
@@ -686,7 +717,7 @@ class NMFPM(object):
             return metalnoise,noise,metals
         else:
             return metals,None,metals
-        
+     '''   
     def wavel(self):
     
         _c = 299792458e-3 # km/s
@@ -701,8 +732,26 @@ class NMFPM(object):
             wavelength.append((np.array(vel)/_c * self.trans_wl[j])+self.trans_wl[j])
     
         return wavelength
+ 
+    def gnoise_add(self):
         
-    def gnoise_add(self,m,SN):
+        _poisson = np.random.poisson(self.flux * ((self.SN**2.)[:,np.newaxis]))
+        noise_continuum = np.sqrt(_poisson)
+        
+        if self.sigma_sky != None:
+            noise_sky = np.random.normal(0, self.sigma_sky, size=np.shape(noise_continuum))
+            noise_array= np.sqrt(noise_continuum**2. +noise_sky**2.)
+        else:
+            noise_array= noise_continuum
+            noise_sky=0
+            
+        profile_noise = _poisson + noise_sky
+        self.flux = profile_noise/((SN**2.)[:,np.newaxis])
+        self.noise = noise_array/((SN**2.)[:,np.newaxis])
+        
+        return        
+        
+    def gnoise_add2(self,m,SN):
         
         
         _poisson = np.random.poisson(m * (SN**2.))
