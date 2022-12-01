@@ -77,6 +77,9 @@
     noise = associated noise values 
     wave =  wavelength values for the nsim synthetic spectra
     ew   =  E.W. (A) distribution of the profiles (intergates on doublet if present)
+    wave_native = original wave before resampling/convolution
+    flux_native = original flux before resampling/convolution
+
     
     Authors
     ----------

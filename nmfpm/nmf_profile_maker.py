@@ -94,7 +94,10 @@ class NMFPM(object):
     noise = associated noise values 
     wave =  wavelength values for the nsim synthetic spectra
     ew   =  E.W. (A) distribution of the profiles (intergates on doublet if present)
-    
+    wave_native = original wave before resampling/convolution
+    flux_native = original flux before resampling/convolution
+
+
     Authors
     ----------
     A. Longobardi
@@ -371,6 +374,7 @@ class NMFPM(object):
         """
         
         if(self.verbosity>0):
+            start_time=time.time()
             print("NMF-PM: starting profile simulations")            
             
         #generate profiles
@@ -381,13 +385,14 @@ class NMFPM(object):
             print("NMF-PM: now compute observed profiles in flux space")
         
         #turn profiles into spectra 
-        MN=self.metal(S)
+        self.metal(S)
         
 
         if(self.verbosity>0):
             print("NMF-PM: All done!")
-            
-        return
+            print("NMF-PM: It took", time.time() - start_time, "to simulate", self.nsim, "spectra")
+
+        return S
     
 
     def _run_profiles(self):
@@ -485,8 +490,8 @@ class NMFPM(object):
         #store velocity,wave and flux 
         self.velocity=vel_native
         self.flux=np.array(metals)        
-        #self.wave=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
-        
+        self.wave_native=np.outer(self.trans_wl,self.velocity/_c)+self.trans_wl.reshape(-1,1)
+        self.flux_native=np.copy(self.flux)
         
         if self.convolved == True:
             if(self.verbosity > 0):
