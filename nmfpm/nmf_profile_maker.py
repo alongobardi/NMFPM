@@ -93,7 +93,7 @@ class NMFPM(object):
     flux_nonoise = Nsim synthetic spectra, no noise
     noise = associated noise values 
     wave =  wavelength values for the nsim synthetic spectra
-    
+    ew   =  E.W. (A) distribution of the profiles (intergates on doublet if present)
     
     Authors
     ----------

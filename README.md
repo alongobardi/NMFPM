@@ -1,74 +1,87 @@
-"""Non-Negative Matrix Factorization - Profile Maker
-
-Generate profiles from two non-negative matrices (X,C), whose product approximates the non-negative matrix Q of observed metals in quasar specttra. These profiles can be used to generate large libraries of realistic metal absorption profiles
-
- Parameters
-----------
-NMF_dct: Dictionary containing the information about the non-negative matrices (X,C).
-    X : NMF_dct['X'] ndarray of shape 𝑛 × 𝑚, where 𝑚 is the number of reduced features in the NMF space
-    C : NMF_dct['C'] ndarray of shape 𝑚 × 𝑣 and represents the coeffcient matrix of the 𝑚 reduced features
-
-nsim: int, default = 1
-    Number of profiles to be generated.
-
-ion_family: {'moderate', 'low', 'user'}, default='moderate'.
-    Ions families to be considered.
-    Valid options:
+   """Non-Negative Matrix Factorization - Profile Maker
     
-    - 'moderate': If 'moderate' the profiles will follow a DeltaV_90 distribution typical of moderate ions transitions.
+    Generate profiles from two non-negative matrices (X,C), whose product approximates the non-negative matrix Q of observed metals in quasar spectra. These profiles can be used to generate large libraries of realistic metal absorption profiles
     
-    - 'low': If 'low' the profiles will follow a DeltaV_90 distribution typical of low ions transitions
+    Parameters
+    ----------
+    NMF_dct: Dictionary containing the information about the non-negative matrices (X,C).
+        X : NMF_dct['X'] ndarray of shape n x m, where m is the number of reduced features in the NMF space
+        C : NMF_dct['C'] ndarray of shape m x u and represents the coeffcient matrix of the m reduced features
     
-    - 'user': If 'user' the profiles will follow a DeltaV_90 distribution provided by the user with filename_ion_familiy
+    nsim: int, default = 1
+        Number of profiles to be generated.
     
-filename_ion_familiy: str, default=None
-    User filename for DeltaV_90 pdf if ion_family = 'user'
-
-ion_logN: ndarray of shape (nsim,), default=[14.0]
-    log Ion Column Density in cm^-2
-
-ion: str, default=['CIV']
-    Ion transition to be simulated
-
-trans_wl: float, default=[1548.2040]
-    Ion transition wavelength in Angstrom
+    ion_family: {'moderate', 'low', 'user'}, default='moderate'.
+        Ions families to be considered.
+        Valid options:
+        
+        - 'moderate': If 'moderate' the profiles will follow a DeltaV_90 distribution typical of moderate ions transitions.
+        
+        - 'low': If 'low' the profiles will follow a DeltaV_90 distribution typical of low ions transitions
+        
+        - 'user': If 'user' the profiles will follow a DeltaV_90 distribution provided by the user with filename_ion_familiy
+        
+    filename_ion_familiy: str, default=None
+        User filename for DeltaV_90 pdf if ion_family = 'user'
     
-filename_ion_list: str, default=None
-    User filename for lines' physical parameters
-
-convolved: Boolean, default = False
-    Allow for the generated profile to be convolved with a Gaussian kernel
-
-res: float, default = 8
-    Resolution of the generated profiles in km/s
+    ion_logN: ndarray of shape (nsim,), default=[14.0]
+        log Ion Column Density in cm^-2
     
-px_scale = float, default = None
-    Sampling of the generated profiles in km/s
+    ion: str, default=['CIV']
+        Ion transition to be simulated
     
-SN = int, default = None
-    Signal-to-Noise ratio of the continuum signal used to compute the gaussian noise to be added
+    trans_wl: float, default=[1548.2040]
+        Ion transition wavelength in Angstrom
+        
+    filename_ion_list: str, default=None
+        User filename for lines' physical parameters
     
-sigma_sky = int, default = None
-    RMS value of the sky signal. If not None the sky noise is computed as a random distribution centred on 0 and with dispersion sigma_sky
+    convolved: Boolean, default = False
+        Allow for the generated profile to be convolved with a Gaussian kernel
     
-seed = int, default = None
+    res: float, default = 8
+        Resolution of the generated profiles in km/s. Needs to set convolved True to take effect
+        
+    px_scale = float, default = None
+        Sampling of the generated profiles in km/s
+        
+    SN = ndarray of shape (nsim,), default = [None]
+        Signal-to-Noise ratio of the continuum signal used to compute the gaussian noise to be added
+        
+    sigma_sky = int, default = None
+        RMS value of the sky signal. If not None the sky noise is computed as a random distribution centred on 0 and with dispersion sigma_sky
+    
+    doublet: Boolean, default = False
+        Enables creation of doublets (e.g. MgII, CIV etc...)
+    
+    dbl_fratio: float, default = 0
+        If doublet True, create a second line with oscillator strengh 
+            f_line_2 = dbl_fratio * f_line_1
 
-verbosity = int, defalut = 0
-    Print (1) or not (0) info to terminal
 
+    dbl_dvel: float, default = 0
+        If doublet True, create a second line with center shifted in velocity by dbl_dvel [km/s]
 
-Attributes
-----------
+    seed: int, default = None
+        Allow selection of seed
+        
+    verbosity = int, defalut = 0
+        Print (1) or not (0) info to terminal
+    
+    
+    Attributes
+    ----------
 
-metals_ = Library of nsim synthetic metals
-noise_ = Array of noise values for the nsim synthetic metals
-wavelength_ = Array of wavelength values for the nsim synthetic metals
-
-
-Authors
-----------
-A. Longobardi
-"""
+    flux = Nsim synthetic spectra, with noise if so desired
+    flux_nonoise = Nsim synthetic spectra, no noise
+    noise = associated noise values 
+    wave =  wavelength values for the nsim synthetic spectra
+    ew   =  E.W. (A) distribution of the profiles (intergates on doublet if present)
+    
+    Authors
+    ----------
+    A. Longobardi
+    """
 
    Example
 ----------
@@ -83,5 +96,3 @@ ion_logN_ = np.random.uniform(12,15,nsim_)
 
 nmf_pm = NMFPM(nsim=nsim_,ion_family='moderate',ion_logN = ion_logN_, ion = ion_, trans_wl =trans_wl_,res=8)
 simulated= nmf_pm.simulation() # Simulated Optical Depth profiles (not convolved nor rebinned)
-metals = nmf_pm.metals_# Simulated Metal profile (convolved and rebinned if options are switched on)
-Wavelength = nmf_pm.wavelength_# Array of wavelength values (rebinned if option is switched on)
