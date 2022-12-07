@@ -313,8 +313,7 @@ class NMFPM(object):
         return count
             
             
-        
-    def _NMF_profile(self, X, C, nsim_bin):
+            def _NMF_profile(self, X, C, nsim_bin):
         """Generate a profile based on the non-negative matrices X, C stored in NMF_dtc
         
         Parameters
@@ -330,6 +329,7 @@ class NMFPM(object):
         
         """
             
+        #ALESSIA: try to turn this into numpy array zeros(N,M)
         simulated =[]
         
         # Number of realization to be performed: set to 1 + the ratio between the total number of simulations and the number of data in the bin
@@ -345,8 +345,9 @@ class NMFPM(object):
                 simulated_NMF_space_tmp[:,ic] = random.sample(list(X[:,ic]),int(n_data))
         
             simulated_tmp = np.dot(simulated_NMF_space_tmp,C)
+            #ALESSIA: fill and not append
             simulated.append(simulated_tmp)
-       
+        #ALESSIA .reshape...
         simulated = [x for xs in simulated for x in xs]
     
         return simulated[0:nsim_bin]
@@ -415,9 +416,21 @@ class NMFPM(object):
         
         S = []
         count = 0
+
+        
+
         for j in range(len(edges)):
+        
+            #ALESSIA to check this substitution - can then delete count_intervals?
+            #If so, this can be moved above the loop, and S can be defined
+            #S=np.zeros((nsim_bin,size manipulation di X, C))
+            #[1,3,5,67,9,7]   [?,?,?] [1-3,3-6,7-9]
+            #nsim_bin,edges=np.histogram(DV90_dist,bins=edges)
             nsim_bin = self._count_intervals(DV90_dist,edges[j])
 
+            #for low prob region, a bin might be empty so skip those
+
+            #ALESSIA nsim_bin numpy array, update it to be sim_bin[j]
             if nsim_bin > 0:
                 if (self.NMF_dct[j]['V_comp'] == 'all'):
                     count+= nsim_bin
@@ -427,11 +440,20 @@ class NMFPM(object):
                 X = self.NMF_dct[j]['X']
                 C = self.NMF_dct[j]['C']
                 
+                #generate profiles
                 profiles_sim_bin = self._NMF_profile(X,C,nsim_bin)
+                #ALESSIA: replace below to be purely a numpy 2d array
+                #S[j,:]=profiles_sim_bin*1e-12
                 S.append(profiles_sim_bin)
         
+        #ALESSIA: this line can go 
         S = [x* (10**(-12)) for xs in S for x in xs]
+
+        #ALESSIA: change this to keep the one you want and not delete the unwanted
+        #indextieni=random.randint(self.nsim) nel range [0,nsim+zeppa]
+        #S=S_nsim+zeppa[index_buoni,:]
         
+        #ALESSIA: most of this can go 
         index_del = [random.randint((self.nsim-count), len(S)-1) for i in range(len(S)-self.nsim)]
         if len(index_del) >=1:
             S = np.delete(S,index_del,axis=0)
