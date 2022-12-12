@@ -2,6 +2,8 @@ import os
 import numbers
 import numpy as np
 import pickle
+from collections import OrderedDict
+from operator import getitem
 import time
 import pandas as pd
 import random
@@ -17,7 +19,8 @@ from astropy import units as u
 class NMFPM(object):
     """Non-Negative Matrix Factorization - Profile Maker
     
-    Generate profiles from two non-negative matrices (X,C), whose product approximates the non-negative matrix Q of observed metals in quasar spectra. These profiles can be used to generate large libraries of realistic metal absorption profiles
+    Generate profiles from two non-negative matrices (X,C), whose product approximates the non-negative matrix Q
+    of observed metals in quasar spectra. These profiles can be used to generate large libraries of realistic metal absorption profiles
     
     Parameters
     ----------
@@ -153,7 +156,7 @@ class NMFPM(object):
         self._check_params()
         # Check files
         self._check_files()
-        
+
         if self.verbosity > 0:
             print("NMF-PM: Starting preliminary operations")
 
@@ -164,8 +167,8 @@ class NMFPM(object):
         __path__ = os.path.dirname(os.path.realpath(__file__))
         
         with open( __path__+'/''docs/NMF_dictionary.json', "rb") as fp:
-            self.NMF_dct = pickle.load(fp)                        
-
+            self.NMF_dct = pickle.load(fp)
+            
         if self.ion_family =='moderate':
             x_,PDF_ = np.loadtxt(__path__+'/''docs/pdf_moderate.txt',unpack=True)
         elif  self.ion_family =='low':
@@ -182,7 +185,6 @@ class NMFPM(object):
         if self.filename_ion_list == None:
             from linetools.lists.linelist import LineList
             self.lines = LineList('Strong')
-                        
             self.fstren = np.zeros_like(self.index, dtype=np.float)
             for ind in np.arange(self.nsim):
                 self.fstren[ind] = self.lines[self.trans_wl[ind]*u.AA]['f']
@@ -276,44 +278,10 @@ class NMFPM(object):
                 "Got "f" ion_family={self.ion_family!r} " "but you did not provide a file for DeltaV_90 pdf "
             )
             
-        return 
-        
-        
-    
-    def _count_intervals(self, sequence, intervals):
-        
-        """
-
-        Utility function to count intervals in delta velocity distribution
-
-        """
-
-        
-        count = defaultdict(int)
-        
-        intervals.sort()
-        for item in sequence:
-            pos = bisect_left(intervals, item)
-            if pos == len(intervals):
-                count[None] += 1
-            else:
-                count[intervals[pos]] += 1
-        
-        if all(elem is None for elem in [k for k in count.keys()]):
-            count = 0
-            
-        else:
-         
-            if (max({k for k in count.keys() if k is not None})) == intervals[1] :
-                count = count[max({k for k in count.keys() if k is not None})]
-            else:
-                count = 0
-        
-    
-        return count
+        return
             
             
-            def _NMF_profile(self, X, C, nsim_bin):
+    def _NMF_profile(self, X, C, nsim_bin):
         """Generate a profile based on the non-negative matrices X, C stored in NMF_dtc
         
         Parameters
@@ -328,15 +296,12 @@ class NMFPM(object):
         simulated : ndarray of shape (n_sim, u) simulated profiles
         
         """
-            
-        #ALESSIA: try to turn this into numpy array zeros(N,M)
-        simulated =[]
         
         # Number of realization to be performed: set to 1 + the ratio between the total number of simulations and the number of data in the bin
         n_data, n_features = X.shape
-        
         nreal = int(nsim_bin/n_data) + 1
-    
+        simulated = np.zeros((nreal,int(n_data),self.natvpix))
+        
         for n in range(nreal):
         
     
@@ -345,11 +310,12 @@ class NMFPM(object):
                 simulated_NMF_space_tmp[:,ic] = random.sample(list(X[:,ic]),int(n_data))
         
             simulated_tmp = np.dot(simulated_NMF_space_tmp,C)
-            #ALESSIA: fill and not append
-            simulated.append(simulated_tmp)
-        #ALESSIA .reshape...
-        simulated = [x for xs in simulated for x in xs]
-    
+        
+            simulated[n,:] = simulated_tmp
+
+        simulated = simulated.reshape(nreal*int(n_data),self.natvpix)
+        
+        
         return simulated[0:nsim_bin]
 
         
@@ -413,54 +379,40 @@ class NMFPM(object):
     
         #now generate the profiles in velocity space
         edges = [self.NMF_dct[i]['edg'] for i in range(len(self.NMF_dct))]
-        
-        S = []
+        nsim_bin = [np.histogram(DV90_dist,bins=b_)[0][0] for b_ in edges]
+        S=np.zeros((np.sum(nsim_bin),self.natvpix))
         count = 0
 
         
 
         for j in range(len(edges)):
         
-            #ALESSIA to check this substitution - can then delete count_intervals?
-            #If so, this can be moved above the loop, and S can be defined
-            #S=np.zeros((nsim_bin,size manipulation di X, C))
-            #[1,3,5,67,9,7]   [?,?,?] [1-3,3-6,7-9]
-            #nsim_bin,edges=np.histogram(DV90_dist,bins=edges)
-            nsim_bin = self._count_intervals(DV90_dist,edges[j])
-
             #for low prob region, a bin might be empty so skip those
 
-            #ALESSIA nsim_bin numpy array, update it to be sim_bin[j]
-            if nsim_bin > 0:
-                if (self.NMF_dct[j]['V_comp'] == 'all'):
-                    count+= nsim_bin
+            if nsim_bin[j] > 0:
+            
                 if (self.NMF_dct[j]['V_comp'] == 'low') or (self.NMF_dct[j]['V_comp'] == 'high'):
-                    nsim_bin = int(nsim_bin/2) + 1
-                        
+                   
+                    nsim_bin[j] = int(nsim_bin[j]/2) + 1
+            
                 X = self.NMF_dct[j]['X']
                 C = self.NMF_dct[j]['C']
                 
                 #generate profiles
-                profiles_sim_bin = self._NMF_profile(X,C,nsim_bin)
-                #ALESSIA: replace below to be purely a numpy 2d array
-                #S[j,:]=profiles_sim_bin*1e-12
-                S.append(profiles_sim_bin)
-        
-        #ALESSIA: this line can go 
-        S = [x* (10**(-12)) for xs in S for x in xs]
-
-        #ALESSIA: change this to keep the one you want and not delete the unwanted
-        #indextieni=random.randint(self.nsim) nel range [0,nsim+zeppa]
-        #S=S_nsim+zeppa[index_buoni,:]
-        
-        #ALESSIA: most of this can go 
-        index_del = [random.randint((self.nsim-count), len(S)-1) for i in range(len(S)-self.nsim)]
-        if len(index_del) >=1:
-            S = np.delete(S,index_del,axis=0)
+                profiles_sim_bin = self._NMF_profile(X,C,nsim_bin[j])
+                
+    
+                S[count:count+nsim_bin[j],:]=profiles_sim_bin*1e-12
+                count+= nsim_bin[j]
+                
+                
             
+        keep_index = np.random.randint(0, high=count+1, size=self.nsim)
+        S = S[keep_index,:]
+        
         if self.verbosity > 0:
             print("NMF-PM: it takes", time.time() - start_time, "to simulate", self.nsim, "velocity profiles")
-    
+        
         return np.array(S)
             
 
