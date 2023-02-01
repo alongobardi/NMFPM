@@ -124,7 +124,8 @@ class NMFPM(object):
         dbl_fratio = 0.0,
         dbl_dvel = 0.0,
         seed = None,
-        verbosity= 0
+        verbosity= 0,
+        llst_key = 'Strong'
         
     
     
@@ -147,6 +148,15 @@ class NMFPM(object):
         self.dbl_dvel = dbl_dvel
         self.seed = seed
         self.verbosity=verbosity
+        
+        #Set the default linetools.LineList llst_key
+        if llst_key not in ['ISM', 'Strong', 'HI', 'H2', 'CO', 'EUV', 'Galaxy', 'AGN']:
+            llst_key = 'Strong'
+            if self.verbosity >0:
+                print("NMF-PM: incorrect llst_lkey for linetools.LineList not provided.")
+                print("\tMust be one of 'ISM', 'Strong', 'HI', 'H2', 'CO', 'EUV', 'Galaxy', 'AGN'.")
+                print("\tSet to 'Strong' by default.")
+        self.llst_key = llst_key
         
         #define index array 
         self.index=np.arange(self.nsim)
@@ -184,7 +194,7 @@ class NMFPM(object):
         #here read oscillator strengths from linetools or file
         if self.filename_ion_list == None:
             from linetools.lists.linelist import LineList
-            self.lines = LineList('Strong')
+            self.lines = LineList(self.llst_key)
             self.fstren = np.zeros_like(self.index, dtype=np.float)
             for ind in np.arange(self.nsim):
                 self.fstren[ind] = self.lines[self.trans_wl[ind]*u.AA]['f']
