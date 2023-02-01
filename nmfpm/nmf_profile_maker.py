@@ -407,7 +407,7 @@ class NMFPM(object):
                 
                 
             
-        keep_index = np.random.randint(0, high=count+1, size=self.nsim)
+        keep_index = np.random.randint(0, high=count, size=self.nsim)
         S = S[keep_index,:]
         
         if self.verbosity > 0:
